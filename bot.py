@@ -1,54 +1,65 @@
 import os
 from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup
 from aiogram.utils import executor
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
-# Переменные окружения
 API_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 
-# Старт и клавиатура
+# =========================
+# Состояния
+# =========================
+class TransferState(StatesGroup):
+    waiting_text = State()
+
+# =========================
+# Старт
+# =========================
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("Бар → Кухня", "Кухня → Бар")
     keyboard.add("Списание", "Фото уборки")
     await message.answer("Привет! Я бот бара 🍹\nВыбирай действие:", reply_markup=keyboard)
 
-# Переносы бар ↔ кухня
+# =========================
+# Начало переноса
+# =========================
 @dp.message_handler(lambda m: m.text in ["Бар → Кухня", "Кухня → Бар"])
-async def transfer(message: types.Message):
-    await bot.send_message(ADMIN_ID, f"{message.from_user.full_name} сделал перенос: {message.text}")
-    await message.reply("Перенос отправлен ✅")
+async def start_transfer(message: types.Message, state: FSMContext):
+    await state.update_data(direction=message.text)
+    await message.answer("Напишите что и сколько переносим\nПример: Лимон 5")
+    await TransferState.waiting_text.set()
 
-# Кнопка списание — бот попросит ввести текст
-@dp.message_handler(lambda m: m.text == "Списание")
-async def write_off_prompt(message: types.Message):
-    await message.reply("Напиши, что списываем (например: Мята 30 порча)")
+# =========================
+# Получаем текст переноса
+# =========================
+@dp.message_handler(state=TransferState.waiting_text)
+async def process_transfer(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    direction = data["direction"]
 
-# Обработка текста после нажатия "Списание" или обычного сообщения
-@dp.message_handler()
-async def handle_text(message: types.Message):
-    # Игнорируем системные кнопки
-    if message.text not in ["Бар → Кухня", "Кухня → Бар", "Списание", "Фото уборки"]:
-        await bot.send_message(ADMIN_ID, f"Списание от {message.from_user.full_name}: {message.text}")
-        await message.reply("Списание отправлено ✅")
+    text = (
+        f"📦 Перенос\n"
+        f"{direction}\n"
+        f"{message.text}\n\n"
+        f"От: {message.from_user.full_name}"
+    )
 
-# Обработка фото уборки
-@dp.message_handler(content_types=['photo'])
-async def handle_photo(message: types.Message):
-    # Получаем файл фото
-    file_id = message.photo[-1].file_id
-    await bot.send_message(ADMIN_ID, f"Фото от {message.from_user.full_name}: на проверке")
-    await message.reply("Фото отправлено на проверку ✅")
+    await bot.send_message(ADMIN_ID, text)
+    await message.answer("Перенос отправлен ✅")
+    await state.finish()
 
-# Запуск бота
-if __name__ == '__main__':
+# =========================
+# Запуск
+# =========================
+if __name__ == "__main__":
     print("Бот запущен")
-
     executor.start_polling(dp, skip_updates=True)
-
-
-
