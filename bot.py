@@ -4,7 +4,7 @@ from aiogram.utils import executor
 
 # Переменные окружения
 API_TOKEN = os.getenv("8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID = int(os.getenv("5646298852"))
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
@@ -49,3 +49,4 @@ if __name__ == '__main__':
     print("Бот запущен")
 
     executor.start_polling(dp, skip_updates=True)
+
