@@ -1,10 +1,11 @@
 import os
 import requests
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup
 from aiogram.utils import executor
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
 
 bot = Bot(token=BOT_TOKEN)
@@ -30,7 +31,7 @@ checklist_kb.add("Готово")
 
 user_states = {}
 
-# ---------- ФУНКЦИЯ ОТПРАВКИ В ТАБЛИЦУ ----------
+# ---------- ОТПРАВКА В ТАБЛИЦУ ----------
 
 def send_to_sheet(sheet, user, text, extra=""):
     try:
@@ -144,22 +145,15 @@ async def checklist_process(message: types.Message):
         user_states[message.from_user.id]["items"].append(message.text)
         await message.answer(f"Добавлено: {message.text}")
 
-# ---------- ЗАПУСК ----------
+# ---------- WEBHOOK ----------
+
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
 
 if __name__ == "__main__":
-    from aiogram import executor
-    import os
-
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-    async def on_startup(dp):
-        await bot.set_webhook(WEBHOOK_URL)
-
     executor.start_webhook(
         dispatcher=dp,
         webhook_path="",
         on_startup=on_startup,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 8080))
+        skip_updates=True
     )
