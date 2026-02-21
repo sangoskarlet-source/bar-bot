@@ -147,4 +147,19 @@ async def checklist_process(message: types.Message):
 # ---------- ЗАПУСК ----------
 
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    from aiogram import executor
+    import os
+
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+    async def on_startup(dp):
+        await bot.set_webhook(WEBHOOK_URL)
+
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path="",
+        on_startup=on_startup,
+        skip_updates=True,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080))
+    )
