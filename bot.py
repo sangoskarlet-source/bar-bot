@@ -35,14 +35,18 @@ user_states = {}
 
 def send_to_sheet(sheet, user, text, extra=""):
     try:
-        requests.post(SHEET_WEBHOOK_URL, json={
-            "sheet": sheet,
-            "user": user,
-            "text": text,
-            "extra": extra
-        })
-    except:
-        pass
+        requests.post(
+            SHEET_WEBHOOK_URL,
+            json={
+                "sheet": sheet,
+                "user": user,
+                "text": text,
+                "extra": extra
+            },
+            timeout=10
+        )
+    except Exception as e:
+        print("Ошибка отправки в таблицу:", e)
 
 # ---------- СТАРТ ----------
 
@@ -155,5 +159,7 @@ if __name__ == "__main__":
         dispatcher=dp,
         webhook_path="",
         on_startup=on_startup,
-        skip_updates=True
+        skip_updates=True,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080))
     )
