@@ -1,162 +1,78 @@
-import os
-import requests
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup
-from aiogram.utils import executor
+import logging
+from datetime import datetime
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-bot = Bot(token=BOT_TOKEN)
+from aiogram import Bot, Dispatcher, executor, types
+
+# ================= НАСТРОЙКИ =================
+
+API_TOKEN = "ТВОЙ_TELEGRAM_BOT_TOKEN"
+SPREADSHEET_ID = "ТВОЙ_SPREADSHEET_ID"
+CREDS_FILE = "credentials.json"
+
+# =============================================
+
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-# ================= КЛАВИАТУРЫ =================
+# --- Google Sheets подключение ---
 
-main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-main_kb.add("📦 Перенос")
-main_kb.add("🗑 Списание")
-main_kb.add("📸 Фото уборки")
-main_kb.add("🧹 Чеклист")
-main_kb.add("🧹 Ежедневная уборка")
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive",
+]
 
-direction_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-direction_kb.add("Кухня → Бар")
-direction_kb.add("Бар → Кухня")
-direction_kb.add("⬅ Назад")
+creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, scope)
+client = gspread.authorize(creds)
 
-checklist_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-checklist_kb.add("Полы")
-checklist_kb.add("Барная стойка")
-checklist_kb.add("Холодильники")
-checklist_kb.add("Готово")
-checklist_kb.add("⬅ Назад")
+sheet_graph = client.open_by_key(SPREADSHEET_ID).worksheet("График")
+sheet_photo = client.open_by_key(SPREADSHEET_ID).worksheet("Фото")
 
-back_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-back_kb.add("⬅ Назад")
-
-user_states = {}
-
-# ================= ОТПРАВКА В SHEETS =================
-
-def send_to_sheet(sheet, user, text, extra=""):
-    try:
-        requests.post(
-            SHEET_WEBHOOK_URL,
-            json={
-                "sheet": sheet,
-                "user": user,  # теперь имя (full_name)
-                "text": text,
-                "extra": extra
-            },
-            timeout=10
-        )
-    except Exception as e:
-        print("Ошибка отправки:", e)
-
-# ================= НАЗАД =================
-
-@dp.message_handler(lambda m: m.text == "⬅ Назад")
-async def go_back(message: types.Message):
-    user_states.pop(message.from_user.id, None)
-    await message.answer("Главное меню:", reply_markup=main_kb)
-
-# ================= СТАРТ =================
+# ================= КОМАНДЫ =================
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-    await message.answer("Выберите действие:", reply_markup=main_kb)
+    await message.answer("Бот работает. Отправь фото ежедневной уборки.")
 
-# ================= ПЕРЕНОС =================
-
-@dp.message_handler(lambda m: m.text == "📦 Перенос")
-async def transfer_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "transfer_direction"}
-    await message.answer("Выберите направление:", reply_markup=direction_kb)
-
-@dp.message_handler(lambda m: m.text in ["Кухня → Бар", "Бар → Кухня"])
-async def transfer_direction(message: types.Message):
-    user_states[message.from_user.id] = {
-        "state": "transfer_text",
-        "direction": message.text
-    }
-    await message.answer("Напишите что и сколько переносим:", reply_markup=back_kb)
-
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "transfer_text")
-async def transfer_save(message: types.Message):
-    direction = user_states[message.from_user.id]["direction"]
-
-    send_to_sheet(
-        "Переносы",
-        message.from_user.full_name,
-        message.text,
-        direction
-    )
-
-    await message.answer("✅ Перенос записан", reply_markup=main_kb)
-    user_states.pop(message.from_user.id)
-
-# ================= СПИСАНИЕ =================
-
-@dp.message_handler(lambda m: m.text == "🗑 Списание")
-async def writeoff_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "writeoff"}
-    await message.answer("Напишите что списываем:", reply_markup=back_kb)
-
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "writeoff")
-async def writeoff_save(message: types.Message):
-    send_to_sheet(
-        "Списания",
-        message.from_user.full_name,
-        message.text
-    )
-
-    await message.answer("✅ Списание записано", reply_markup=main_kb)
-    user_states.pop(message.from_user.id)
-
-# ================= ЕЖЕДНЕВНАЯ УБОРКА =================
-
-@dp.message_handler(lambda m: m.text == "🧹 Ежедневная уборка")
-async def daily_cleaning(message: types.Message):
-    user_states[message.from_user.id] = {"state": "daily_cleaning"}
-    await message.answer("Отправьте фото выполнения уборки:", reply_markup=back_kb)
+@dp.message_handler(commands=["id"])
+async def get_id(message: types.Message):
+    await message.answer(f"Ваш chat_id: {message.from_user.id}")
 
 # ================= СОХРАНЕНИЕ ФОТО =================
 
 @dp.message_handler(content_types=types.ContentType.PHOTO)
 async def save_photo(message: types.Message):
-
-    state = user_states.get(message.from_user.id, {}).get("state")
-    if not state:
-        return
-
+    user_id = str(message.from_user.id)
     file_id = message.photo[-1].file_id
+    now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 
-    if state == "daily_cleaning":
-        sheet_name = "Фото"
-    else:
-        return
+    # Получаем данные графика
+    graph_data = sheet_graph.get_all_values()
 
-    send_to_sheet(
-        sheet_name,
-        str(message.from_user.id),
+    user_name = "Не найден"
+
+    # Ищем имя по chat_id (столбец A)
+    for row in graph_data[1:]:  # пропускаем заголовок
+        if len(row) > 1 and row[0] == user_id:
+            user_name = row[1]  # столбец B = имя
+            break
+
+    # Записываем в лист Фото:
+    # Дата | Имя | chat_id | file_id
+    sheet_photo.append_row([
+        now,
+        user_name,
+        user_id,
         file_id
-    )
+    ])
 
-    await message.answer("✅ Фото сохранено", reply_markup=main_kb)
-    user_states.pop(message.from_user.id)
+    await message.answer("Фото сохранено ✅")
 
-# ================= WEBHOOK =================
-
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
+# ================= ЗАПУСК =================
 
 if __name__ == "__main__":
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path="",
-        on_startup=on_startup,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080))
-    )
+    executor.start_polling(dp, skip_updates=True)
