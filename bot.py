@@ -45,7 +45,7 @@ def send_to_sheet(sheet, user, text, extra=""):
             SHEET_WEBHOOK_URL,
             json={
                 "sheet": sheet,
-                "user": user,
+                "user": user,  # теперь имя (full_name)
                 "text": text,
                 "extra": extra
             },
@@ -88,7 +88,7 @@ async def transfer_save(message: types.Message):
 
     send_to_sheet(
         "Переносы",
-        str(message.from_user.id),
+        message.from_user.full_name,
         message.text,
         direction
     )
@@ -107,7 +107,7 @@ async def writeoff_start(message: types.Message):
 async def writeoff_save(message: types.Message):
     send_to_sheet(
         "Списания",
-        str(message.from_user.id),
+        message.from_user.full_name,
         message.text
     )
 
