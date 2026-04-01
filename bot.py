@@ -11,6 +11,28 @@ SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
+# ================= СОСТОЯНИЯ =================
+
+user_states = {}
+
+# ================= ЧЕК-ЛИСТ =================
+
+CHECKLIST_ITEMS = [
+    "Лайн чек заготовок",
+
+    "Фото бара отправлено",
+    "Крышки закрыты",
+    "Стоп-лист проверен",
+    "Баклахи с водой",
+    "Поверхности протерты",
+    "Посуда в баре",
+    "Кофе машина",
+    "Раковины",
+    "Кассовый узел",
+    "Зона алкоголя",
+    "Порядок на складе"
+]
+
 # ================= КЛАВИАТУРЫ =================
 
 main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -25,17 +47,8 @@ direction_kb.add("Кухня → Бар")
 direction_kb.add("Бар → Кухня")
 direction_kb.add("⬅ Назад")
 
-checklist_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-checklist_kb.add("Полы")
-checklist_kb.add("Барная стойка")
-checklist_kb.add("Холодильники")
-checklist_kb.add("Готово")
-checklist_kb.add("⬅ Назад")
-
 back_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 back_kb.add("⬅ Назад")
-
-user_states = {}
 
 # ================= ОТПРАВКА В SHEETS =================
 
@@ -114,21 +127,90 @@ async def writeoff_save(message: types.Message):
     await message.answer("✅ Списание записано", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
-# ================= ЕЖЕДНЕВНАЯ УБОРКА =================
+# ================= ЧЕК-ЛИСТ =================
 
-@dp.message_handler(lambda m: m.text == "🧹 Ежедневная уборка")
-async def daily_cleaning(message: types.Message):
-    user_states[message.from_user.id] = {"state": "daily_cleaning"}
-    await message.answer("Отправьте фото выполнения уборки:", reply_markup=back_kb)
+@dp.message_handler(lambda m: m.text == "🧹 Чеклист")
+async def checklist_start(message: types.Message):
+    user_states[message.from_user.id] = {
+        "state": "checklist",
+        "done": []
+    }
+    await show_checklist(message)
 
-# ================= СОХРАНЕНИЕ ФОТО =================
+async def show_checklist(message):
+    state = user_states.get(message.from_user.id)
+    done = state.get("done", [])
+
+    text = "🧹 Чек-лист смены:\n\n"
+
+    text += "🔹 Лайн-чек:\n"
+    item = "Лайн чек заготовок"
+    mark = "✅" if item in done else "⬜"
+    text += f"{mark} {item}\n\n"
+
+    text += "🔻 Закрытие смены:\n"
+    for item in CHECKLIST_ITEMS[1:]:
+        mark = "✅" if item in done else "⬜"
+        text += f"{mark} {item}\n"
+
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+
+    for item in CHECKLIST_ITEMS:
+        kb.add(item)
+
+    kb.add("Готово")
+    kb.add("⬅ Назад")
+
+    await message.answer(text, reply_markup=kb)
+
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "checklist")
+async def checklist_process(message: types.Message):
+
+    if message.text == "Готово":
+        done = user_states[message.from_user.id]["done"]
+
+        if "Лайн чек заготовок" not in done:
+            await message.answer("❗ Сделай лайн-чек")
+            return
+
+        if "Фото бара отправлено" not in done:
+            await message.answer("❗ Нужно отправить фото бара")
+            return
+
+        for item in CHECKLIST_ITEMS:
+            status = "Выполнено" if item in done else "Не выполнено"
+
+            send_to_sheet(
+                "Чеклист",
+                message.from_user.full_name,
+                item,
+                status
+            )
+
+        await message.answer("✅ Чек-лист сохранён", reply_markup=main_kb)
+        user_states.pop(message.from_user.id)
+        return
+
+    if message.text in CHECKLIST_ITEMS:
+        done = user_states[message.from_user.id]["done"]
+
+        if message.text in done:
+            done.remove(message.text)
+        else:
+            done.append(message.text)
+
+        await show_checklist(message)
+
+# ================= ФОТО =================
 
 @dp.message_handler(content_types=types.ContentType.PHOTO)
 async def save_photo(message: types.Message):
 
     state = user_states.get(message.from_user.id, {}).get("state")
-    if not state:
-        return
+
+    if state == "checklist":
+        if "Фото бара отправлено" not in user_states[message.from_user.id]["done"]:
+            user_states[message.from_user.id]["done"].append("Фото бара отправлено")
 
     file_id = message.photo[-1].file_id
 
@@ -139,7 +221,13 @@ async def save_photo(message: types.Message):
     )
 
     await message.answer("✅ Фото сохранено", reply_markup=main_kb)
-    user_states.pop(message.from_user.id)
+
+# ================= ЕЖЕДНЕВНАЯ УБОРКА =================
+
+@dp.message_handler(lambda m: m.text == "🧹 Ежедневная уборка")
+async def daily_cleaning(message: types.Message):
+    user_states[message.from_user.id] = {"state": "daily_cleaning"}
+    await message.answer("Отправьте фото выполнения уборки:", reply_markup=back_kb)
 
 # ================= WEBHOOK =================
 
