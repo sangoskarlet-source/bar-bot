@@ -1,15 +1,17 @@
 import telebot
 import requests
 
-# ================== Настройки ==================
+# ================= Настройки =================
 BOT_TOKEN = "8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ"
 SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec"
 
 bot = telebot.TeleBot(BOT_TOKEN)
-user_state = {}        # для переноса/списания
+
+# состояния пользователей
+user_state = {}        # для Переносов и Списаний
 user_checklist = {}    # для чек-листа
 
-# ================== Главное меню ==================
+# ================= Главное меню =================
 def main_menu(chat_id):
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("📦 Переносы", "🗑 Списания")
@@ -20,7 +22,7 @@ def main_menu(chat_id):
 def start(message):
     main_menu(message.chat.id)
 
-# ================== Переносы и списания ==================
+# ================= Переносы и Списания =================
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     chat_id = message.chat.id
@@ -30,10 +32,10 @@ def handle_text(message):
         try:
             requests.post(
                 SHEET_WEBHOOK_URL,
-                json={"sheet": "Переносы", "user": message.from_user.first_name, "text": message.text, "extra": "Бар"},
+                json={"sheet": "Переносы", "user": message.from_user.first_name, "text": message.text},
                 timeout=5
             )
-            bot.send_message(chat_id, "Перенос записан ✅")
+            bot.send_message(chat_id, "✅ Перенос записан")
         except Exception as e:
             bot.send_message(chat_id, f"Ошибка отправки: {e}")
         user_state[chat_id] = None
@@ -45,12 +47,12 @@ def handle_text(message):
                 json={"sheet": "Списания", "user": message.from_user.first_name, "text": message.text},
                 timeout=5
             )
-            bot.send_message(chat_id, "Списание записано ✅")
+            bot.send_message(chat_id, "✅ Списание записано")
         except Exception as e:
             bot.send_message(chat_id, f"Ошибка отправки: {e}")
         user_state[chat_id] = None
 
-# ================== Кнопки меню ==================
+# ================= Меню кнопок =================
 @bot.message_handler(func=lambda m: m.text in ["📦 Переносы", "🗑 Списания", "✅ Чек-лист"])
 def menu_buttons(message):
     chat_id = message.chat.id
@@ -58,17 +60,17 @@ def menu_buttons(message):
 
     if text == "📦 Переносы":
         user_state[chat_id] = "perenos"
-        bot.send_message(chat_id, "Введите переносы, например:\nЛимон 2\nАпельсин 3")
+        bot.send_message(chat_id, "Введите что переносим, например:\nЛимон 2\nАпельсин 3")
 
     elif text == "🗑 Списания":
         user_state[chat_id] = "spisanie"
-        bot.send_message(chat_id, "Введите списания")
+        bot.send_message(chat_id, "Введите что списываем")
 
     elif text == "✅ Чек-лист":
         user_checklist[chat_id] = {}
         show_checklist(chat_id)
 
-# ================== Чек-лист ==================
+# ================= Чек-лист =================
 def show_checklist(chat_id):
     markup = telebot.types.InlineKeyboardMarkup()
     checklist_items = [
@@ -98,7 +100,7 @@ def callback(call):
         main_menu(chat_id)
         return
 
-    # отмечаем пункт чек-листа
+    # Отмечаем пункт чек-листа
     if chat_id not in user_checklist:
         user_checklist[chat_id] = {}
     user_checklist[chat_id][data] = "Выполнено"
@@ -120,5 +122,5 @@ def send_checklist(chat_id):
         bot.send_message(chat_id, f"Ошибка отправки: {e}")
     user_checklist[chat_id] = {}
 
-# ================== Запуск ==================
+# ================= Запуск бота =================
 bot.infinity_polling()
