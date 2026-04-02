@@ -31,7 +31,7 @@ checklist_items = [
 user_states = {}
 
 # ================= Отправка в Sheets =================
-def send_to_sheet(sheet, user, data_dict):
+def send_to_sheet(sheet, data_dict):
     try:
         requests.post(SHEET_WEBHOOK_URL, json={
             "sheet": sheet,
@@ -69,7 +69,7 @@ async def transfer_save(message: types.Message):
         "Позиция": message.text,
         "Вес": ""
     }
-    send_to_sheet("Переносы", message.from_user.full_name, data)
+    send_to_sheet("Переносы", data)
     await message.answer("✅ Перенос записан", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
@@ -87,7 +87,7 @@ async def writeoff_save(message: types.Message):
         "Позиция": message.text,
         "Вес": ""
     }
-    send_to_sheet("Списания", message.from_user.full_name, data)
+    send_to_sheet("Списания", data)
     await message.answer("✅ Списание записано", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
@@ -112,7 +112,7 @@ async def checklist_handler(message: types.Message):
         }
         for item in checklist_items:
             data[item] = item in checked
-        send_to_sheet("Чеклист", message.from_user.full_name, data)
+        send_to_sheet("Чеклист", data)
         await message.answer("✅ Чеклист отправлен", reply_markup=main_kb)
         user_states.pop(message.from_user.id)
         return
