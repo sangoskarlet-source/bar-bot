@@ -1,13 +1,19 @@
+import os
 import telebot
 import requests
 
 # ================= Настройки =================
-BOT_TOKEN = "8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ"
-SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbznvZYzfov0xAAHyIU0gBg2C3cVKHkcf6kGfs-9a4yFmtYxWzU5pJqTrFXlpCPa7THV6A/exec"  # <- Вставь сюда реальный Web App URL
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
+
+if not BOT_TOKEN:
+    raise ValueError("Ошибка: BOT_TOKEN не задан!")
+if not SHEET_WEBHOOK_URL:
+    raise ValueError("Ошибка: SHEET_WEBHOOK_URL не задан!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# состояния пользователей
+# ================= Состояния =================
 user_state = {}        # Для Переносов и Списаний
 user_checklist = {}    # Для чек-листа
 
