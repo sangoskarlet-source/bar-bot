@@ -3,7 +3,7 @@ import requests
 
 # ================= Настройки =================
 BOT_TOKEN = "8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ"
-SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec"
+SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxg8ZACys5zkZswAkCMVKaWXAc7dSqblHjtnHMxihG1EUm02tYLTCANQQ3zhBZslxZSRQ/exec"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
