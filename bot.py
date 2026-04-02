@@ -3,13 +3,13 @@ import requests
 
 # ================= Настройки =================
 BOT_TOKEN = "8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ"
-SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxg8ZACys5zkZswAkCMVKaWXAc7dSqblHjtnHMxihG1EUm02tYLTCANQQ3zhBZslxZSRQ/exec"
+SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbznvZYzfov0xAAHyIU0gBg2C3cVKHkcf6kGfs-9a4yFmtYxWzU5pJqTrFXlpCPa7THV6A/exec"  # <- Вставь сюда реальный Web App URL
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # состояния пользователей
-user_state = {}        # для Переносов и Списаний
-user_checklist = {}    # для чек-листа
+user_state = {}        # Для Переносов и Списаний
+user_checklist = {}    # Для чек-листа
 
 # ================= Главное меню =================
 def main_menu(chat_id):
@@ -21,6 +21,24 @@ def main_menu(chat_id):
 @bot.message_handler(commands=['start'])
 def start(message):
     main_menu(message.chat.id)
+
+# ================= Меню кнопок =================
+@bot.message_handler(func=lambda m: m.text in ["📦 Переносы", "🗑 Списания", "✅ Чек-лист"])
+def menu_buttons(message):
+    chat_id = message.chat.id
+    text = message.text
+
+    if text == "📦 Переносы":
+        user_state[chat_id] = "perenos"
+        bot.send_message(chat_id, "Введите что переносим, например:\nЛимон 2\nАпельсин 3")
+
+    elif text == "🗑 Списания":
+        user_state[chat_id] = "spisanie"
+        bot.send_message(chat_id, "Введите что списываем")
+
+    elif text == "✅ Чек-лист":
+        user_checklist[chat_id] = {}
+        show_checklist(chat_id)
 
 # ================= Переносы и Списания =================
 @bot.message_handler(func=lambda message: True)
@@ -51,24 +69,6 @@ def handle_text(message):
         except Exception as e:
             bot.send_message(chat_id, f"Ошибка отправки: {e}")
         user_state[chat_id] = None
-
-# ================= Меню кнопок =================
-@bot.message_handler(func=lambda m: m.text in ["📦 Переносы", "🗑 Списания", "✅ Чек-лист"])
-def menu_buttons(message):
-    chat_id = message.chat.id
-    text = message.text
-
-    if text == "📦 Переносы":
-        user_state[chat_id] = "perenos"
-        bot.send_message(chat_id, "Введите что переносим, например:\nЛимон 2\nАпельсин 3")
-
-    elif text == "🗑 Списания":
-        user_state[chat_id] = "spisanie"
-        bot.send_message(chat_id, "Введите что списываем")
-
-    elif text == "✅ Чек-лист":
-        user_checklist[chat_id] = {}
-        show_checklist(chat_id)
 
 # ================= Чек-лист =================
 def show_checklist(chat_id):
