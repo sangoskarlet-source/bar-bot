@@ -3,6 +3,7 @@ import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
+from datetime import datetime
 
 # ================= Настройки =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -19,18 +20,27 @@ main_kb.add("✅ Чек-лист")
 back_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 back_kb.add("⬅ Назад")
 
+direction_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+direction_kb.add("Кухня → Бар", "Бар → Кухня")
+direction_kb.add("⬅ Назад")
+
 # ================= Состояния =================
 user_states = {}
 user_checklist = {}
 
 # ================= Отправка в Google Sheets =================
-def send_to_sheet(sheet, user, text, extra=""):
+def send_to_sheet(sheet, user, data_dict):
+    """
+    Отправляет словарь data_dict в Google Sheets через Webhook
+    data_dict: ключ = колонка, значение = что записать
+    """
+    payload = {
+        "sheet": sheet,
+        "user": user,
+        "text": data_dict  # словарь будет обработан в Apps Script
+    }
     try:
-        requests.post(
-            SHEET_WEBHOOK_URL,
-            json={"sheet": sheet, "user": user, "text": text, "extra": extra},
-            timeout=10
-        )
+        requests.post(SHEET_WEBHOOK_URL, json=payload, timeout=10)
     except Exception as e:
         print("Ошибка отправки:", e)
 
@@ -42,12 +52,43 @@ async def start(message: types.Message):
 # ================= Переносы =================
 @dp.message_handler(lambda m: m.text == "📦 Переносы")
 async def transfer_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "transfer"}
-    await message.answer("Введите что переносим:", reply_markup=back_kb)
+    user_states[message.from_user.id] = {"state": "transfer_direction"}
+    await message.answer("Выберите направление:", reply_markup=direction_kb)
 
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "transfer")
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "transfer_direction")
+async def transfer_direction(message: types.Message):
+    if message.text not in ["Кухня → Бар", "Бар → Кухня"]:
+        await message.answer("Выберите направление кнопкой:", reply_markup=direction_kb)
+        return
+    user_states[message.from_user.id] = {
+        "state": "transfer_text",
+        "direction": message.text
+    }
+    await message.answer("Напишите что и сколько переносим:", reply_markup=back_kb)
+
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "transfer_text")
 async def transfer_save(message: types.Message):
-    send_to_sheet("Переносы", message.from_user.full_name, message.text)
+    direction = user_states[message.from_user.id]["direction"]
+    # Отправляем в Sheets построчно, можно с разделением числа и позиции
+    lines = message.text.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        number_match = None
+        import re
+        m_num = re.search(r"\d+([.,]\d+)?", line)
+        weight = m_num.group(0) if m_num else ""
+        position = re.sub(r"\d+([.,]\d+)?", "", line).strip()
+        data_dict = {
+            "Дата": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "Сотрудник": message.from_user.full_name,
+            "Направление": direction,
+            "Позиция": position,
+            "Вес": weight
+        }
+        send_to_sheet("Переносы", message.from_user.full_name, data_dict)
+
     await message.answer("✅ Перенос записан", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
@@ -55,11 +96,28 @@ async def transfer_save(message: types.Message):
 @dp.message_handler(lambda m: m.text == "🗑 Списания")
 async def writeoff_start(message: types.Message):
     user_states[message.from_user.id] = {"state": "writeoff"}
-    await message.answer("Введите что списываем:", reply_markup=back_kb)
+    await message.answer("Напишите что списываем:", reply_markup=back_kb)
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "writeoff")
 async def writeoff_save(message: types.Message):
-    send_to_sheet("Списания", message.from_user.full_name, message.text)
+    lines = message.text.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        number_match = None
+        import re
+        m_num = re.search(r"\d+([.,]\d+)?", line)
+        weight = m_num.group(0) if m_num else ""
+        position = re.sub(r"\d+([.,]\d+)?", "", line).strip()
+        data_dict = {
+            "Дата": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "Сотрудник": message.from_user.full_name,
+            "Позиция": position,
+            "Вес": weight
+        }
+        send_to_sheet("Списания", message.from_user.full_name, data_dict)
+
     await message.answer("✅ Списание записано", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
@@ -96,9 +154,11 @@ async def checklist_handler(callback: types.CallbackQuery):
     if data == "send_checklist":
         checked = user_checklist.get(user_id, set())
         if checked:
-            # Отправляем в Google Sheets, один row = один пользователь, колонки = пункты
-            payload = {item: ("Выполнено" if item in checked else "") for item in checklist_items}
-            send_to_sheet("Чеклист", str(user_id), str(payload))
+            # Отправляем каждый пункт в отдельную колонку
+            data_dict = {"Дата": datetime.now().strftime("%d.%m.%Y %H:%M:%S")}
+            for item in checklist_items:
+                data_dict[item] = "Выполнено" if item in checked else ""
+            send_to_sheet("Чеклист", str(user_id), data_dict)
             await bot.send_message(user_id, "Чек-лист сохранён ✅", reply_markup=main_kb)
         else:
             await bot.send_message(user_id, "Вы ничего не отметили ❌", reply_markup=main_kb)
