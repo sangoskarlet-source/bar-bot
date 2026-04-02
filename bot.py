@@ -1,156 +1,214 @@
-import os
+import telebot
 import requests
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup
-from aiogram.utils import executor
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
+# Токен твоего бота
+BOT_TOKEN = "8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ"
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+# URL твоего Apps Script
+SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbz/exec"
 
-user_states = {}
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def reset_state(user_id):
-    user_states.pop(user_id, None)
+# состояния пользователей
+user_state = {}
 
-CHECKLIST_ITEMS = [
-    "Лайн чек заготовок",
-    "Фото бара отправлено",
-    "Крышки закрыты",
-    "Стоп-лист проверен",
-    "Баклахи с водой",
-    "Поверхности протерты",
-    "Посуда в баре",
-    "Кофе машина",
-    "Раковины",
-    "Кассовый узел",
-    "Зона алкоголя",
-    "Порядок на складе"
-]
+# временное хранение чек-листа
+user_checklist = {}
 
-# ================= КНОПКИ =================
-main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-main_kb.add("📦 Перенос", "🗑 Списание")
-main_kb.add("📸 Фото уборки", "🧹 Чеклист")
 
-back_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-back_kb.add("⬅ Назад")
+# =============================
+# СТАРТ / МЕНЮ
+# =============================
+def main_menu(chat_id):
+    markup = telebot.types.InlineKeyboardMarkup()
 
-# ================= START =================
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message):
-    reset_state(message.from_user.id)
-    await message.answer("Выберите действие:", reply_markup=main_kb)
+    markup.add(
+        telebot.types.InlineKeyboardButton("📦 Переносы", callback_data="perenos"),
+        telebot.types.InlineKeyboardButton("🗑 Списания", callback_data="spisanie")
+    )
 
-# ================= ЧЕКЛИСТ =================
-@dp.message_handler(lambda m: m.text == "🧹 Чеклист")
-async def checklist_start(message: types.Message):
-    user_states[message.from_user.id] = {
-        "state": "checklist",
-        "done": []
+    markup.add(
+        telebot.types.InlineKeyboardButton("✅ Чек-лист", callback_data="checklist")
+    )
+
+    bot.send_message(chat_id, "Выбери действие:", reply_markup=markup)
+
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    main_menu(message.chat.id)
+
+
+# =============================
+# CALLBACK КНОПКИ
+# =============================
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+
+    chat_id = call.message.chat.id
+
+    # НАЗАД
+    if call.data == "back":
+        main_menu(chat_id)
+
+    # ПЕРЕНОСЫ
+    elif call.data == "perenos":
+        user_state[chat_id] = "perenos"
+        bot.send_message(chat_id, "Введи переносы:\nпример:\nЛимон 2\nАпельсин 3")
+
+    # СПИСАНИЯ
+    elif call.data == "spisanie":
+        user_state[chat_id] = "spisanie"
+        bot.send_message(chat_id, "Введи списания:")
+
+    # ЧЕК-ЛИСТ
+    elif call.data == "checklist":
+        user_checklist[chat_id] = {}
+        show_checklist(chat_id)
+
+    # ЧЕК-ЛИСТ ПУНКТЫ
+    elif call.data.startswith("cl_"):
+        handle_checklist(call)
+
+    # ОТПРАВКА ЧЕК-ЛИСТА
+    elif call.data == "send_checklist":
+        send_checklist(chat_id)
+        bot.answer_callback_query(call.id, "Отправлено ✅")
+        main_menu(chat_id)
+
+
+# =============================
+# ЧЕК-ЛИСТ UI
+# =============================
+def show_checklist(chat_id):
+
+    markup = telebot.types.InlineKeyboardMarkup()
+
+    buttons = [
+        ("Лайн чек", "cl_1"),
+        ("Фото бара", "cl_2"),
+        ("Крышки", "cl_3"),
+        ("Стоп-лист", "cl_4"),
+        ("Баклахи", "cl_5"),
+        ("Поверхности", "cl_6"),
+        ("Посуда", "cl_7"),
+        ("Кофе машина", "cl_8"),
+        ("Раковины", "cl_9"),
+        ("Касса", "cl_10"),
+        ("Алкоголь", "cl_11"),
+        ("Склад", "cl_12")
+    ]
+
+    for text, code in buttons:
+        markup.add(telebot.types.InlineKeyboardButton(text, callback_data=code))
+
+    markup.add(
+        telebot.types.InlineKeyboardButton("✅ Отправить", callback_data="send_checklist")
+    )
+
+    markup.add(
+        telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="back")
+    )
+
+    bot.send_message(chat_id, "Отметь выполненные пункты:", reply_markup=markup)
+
+
+# =============================
+# ЛОГИКА ЧЕК-ЛИСТА
+# =============================
+def handle_checklist(call):
+
+    chat_id = call.message.chat.id
+
+    checklist_map = {
+        "cl_1": "Лайн чек заготовок",
+        "cl_2": "Фото бара отправлено",
+        "cl_3": "Крышки закрыты",
+        "cl_4": "Стоп-лист проверен",
+        "cl_5": "Баклахи с водой",
+        "cl_6": "Поверхности протерты",
+        "cl_7": "Посуда в баре",
+        "cl_8": "Кофе машина",
+        "cl_9": "Раковины",
+        "cl_10": "Кассовый узел",
+        "cl_11": "Зона алкоголя",
+        "cl_12": "Порядок на складе"
     }
-    await show_checklist(message)
 
-async def show_checklist(message):
-    state = user_states.get(message.from_user.id)
-    done = state.get("done", [])
+    item = checklist_map.get(call.data)
 
-    text = "🧹 Чек-лист:\n\n"
-    for item in CHECKLIST_ITEMS:
-        mark = "✅" if item in done else "⬜"
-        text += f"{mark} {item}\n"
+    if chat_id not in user_checklist:
+        user_checklist[chat_id] = {}
 
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for item in CHECKLIST_ITEMS:
-        kb.add(item)
-    kb.add("Готово", "⬅ Назад")
+    user_checklist[chat_id][item] = "Выполнено"
 
-    await message.answer(text, reply_markup=kb)
+    bot.answer_callback_query(call.id, f"{item} ✅")
 
-@dp.message_handler(lambda m: m.text in CHECKLIST_ITEMS)
-async def toggle_item(message: types.Message):
-    state = user_states.get(message.from_user.id)
-    if not state or state.get("state") != "checklist":
+
+def send_checklist(chat_id):
+
+    data = user_checklist.get(chat_id, {})
+
+    # если ничего не выбрано
+    if not data:
+        bot.send_message(chat_id, "Ты ничего не отметил ❗")
         return
-
-    done = state["done"]
-
-    if message.text in done:
-        done.remove(message.text)
-    else:
-        done.append(message.text)
-
-    await show_checklist(message)
-
-@dp.message_handler(lambda m: m.text == "Готово")
-async def checklist_finish(message: types.Message):
-    state = user_states.get(message.from_user.id)
-    if not state:
-        return
-
-    done = state["done"]
-
-    # обязательные пункты
-    if "Лайн чек заготовок" not in done:
-        await message.answer("❗ Сделай лайн-чек")
-        return
-
-    if "Фото бара отправлено" not in done:
-        await message.answer("❗ Нужно фото бара")
-        return
-
-    # отправка ВСЕГО чек-листа одним запросом
-    checklist_data = {
-        item: ("Выполнено" if item in done else "Не выполнено")
-        for item in CHECKLIST_ITEMS
-    }
 
     requests.post(
         SHEET_WEBHOOK_URL,
         json={
             "sheet": "Чеклист",
-            "user": message.from_user.full_name,
-            "checklist": checklist_data
-        }
+            "user": str(chat_id),
+            "checklist": data
+        },
+        timeout=5
     )
 
-    await message.answer("✅ Чек-лист сохранён", reply_markup=main_kb)
-    reset_state(message.from_user.id)
+    bot.send_message(chat_id, "Чек-лист сохранён ✅")
 
-# ================= ФОТО =================
-@dp.message_handler(content_types=types.ContentType.PHOTO)
-async def photo_handler(message: types.Message):
-    state = user_states.get(message.from_user.id)
 
-    if state and state.get("state") == "checklist":
-        if "Фото бара отправлено" not in state["done"]:
-            state["done"].append("Фото бара отправлено")
-            await show_checklist(message)
+# =============================
+# ОБРАБОТКА ТЕКСТА
+# =============================
+@bot.message_handler(func=lambda message: True)
+def handle_text(message):
 
-    requests.post(
-        SHEET_WEBHOOK_URL,
-        json={
-            "sheet": "Фото",
-            "user": message.from_user.full_name,
-            "text": message.photo[-1].file_id
-        }
-    )
+    chat_id = message.chat.id
+    state = user_state.get(chat_id)
 
-    await message.answer("✅ Фото сохранено")
+    if state == "perenos":
 
-# ================= ЗАПУСК =================
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
+        requests.post(
+            SHEET_WEBHOOK_URL,
+            json={
+                "sheet": "Переносы",
+                "user": message.from_user.first_name,
+                "text": message.text,
+                "extra": "Бар"
+            },
+            timeout=5
+        )
 
-if __name__ == "__main__":
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path="",
-        on_startup=on_startup,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080))
-    )
+        bot.send_message(chat_id, "Перенос записан ✅")
+        user_state[chat_id] = None
+
+    elif state == "spisanie":
+
+        requests.post(
+            SHEET_WEBHOOK_URL,
+            json={
+                "sheet": "Списания",
+                "user": message.from_user.first_name,
+                "text": message.text
+            },
+            timeout=5
+        )
+
+        bot.send_message(chat_id, "Списание записано ✅")
+        user_state[chat_id] = None
+
+
+# =============================
+# ЗАПУСК
+# =============================
+bot.infinity_polling()
