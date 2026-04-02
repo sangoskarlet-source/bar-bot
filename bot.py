@@ -2,8 +2,8 @@ import os
 import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup
-from aiogram.utils import executor
 from datetime import datetime
+import re
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
@@ -62,14 +62,24 @@ async def transfer_direction(message: types.Message):
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "transfer_text")
 async def transfer_save(message: types.Message):
     direction = user_states[message.from_user.id]["direction"]
-    data = {
-        "Дата": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-        "Сотрудник": message.from_user.full_name,
-        "Направление": direction,
-        "Позиция": message.text,
-        "Вес": ""
-    }
-    send_to_sheet("Переносы", data)
+    lines = message.text.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        number_match = re.search(r"\d+([.,]\d+)?", line)
+        weight = number_match.group(0) if number_match else ""
+        position = re.sub(r"\d+([.,]\d+)?", "", line).strip()
+
+        data = {
+            "Дата": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "Сотрудник": message.from_user.full_name,
+            "Направление": direction,
+            "Позиция": position,
+            "Вес": weight
+        }
+        send_to_sheet("Переносы", data)
+
     await message.answer("✅ Перенос записан", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
@@ -81,13 +91,23 @@ async def writeoff_start(message: types.Message):
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "writeoff")
 async def writeoff_save(message: types.Message):
-    data = {
-        "Дата": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-        "Сотрудник": message.from_user.full_name,
-        "Позиция": message.text,
-        "Вес": ""
-    }
-    send_to_sheet("Списания", data)
+    lines = message.text.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        number_match = re.search(r"\d+([.,]\d+)?", line)
+        weight = number_match.group(0) if number_match else ""
+        position = re.sub(r"\d+([.,]\d+)?", "", line).strip()
+
+        data = {
+            "Дата": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            "Сотрудник": message.from_user.full_name,
+            "Позиция": position,
+            "Вес": weight
+        }
+        send_to_sheet("Списания", data)
+
     await message.answer("✅ Списание записано", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
@@ -111,7 +131,7 @@ async def checklist_handler(message: types.Message):
             "Сотрудник": message.from_user.full_name
         }
         for item in checklist_items:
-            data[item] = item in checked
+            data[item] = "✅" if item in checked else "❌"
         send_to_sheet("Чеклист", data)
         await message.answer("✅ Чеклист отправлен", reply_markup=main_kb)
         user_states.pop(message.from_user.id)
