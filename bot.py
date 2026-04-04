@@ -166,7 +166,7 @@ async def photo_save(message: types.Message):
     user_states.pop(message.from_user.id)
 
 # ================= ЖУРНАЛ ТЕМПЕРАТУР =================
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup
 
 # Список холодильников по этажам
 fridges = {
@@ -190,7 +190,7 @@ async def temp_start(message: types.Message):
 async def temp_floor_choice(message: types.Message):
     if message.text not in fridges:
         return
-    user_temps[message.from_user.id]["state"] = "enter_temp"
+    user_temps[message.from_user.id]["state"] = "choose_fridge"
     user_temps[message.from_user.id]["floor"] = message.text
     # Кнопки холодильников для выбора
     fridge_kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -199,23 +199,24 @@ async def temp_floor_choice(message: types.Message):
     fridge_kb.add("⬅ Назад")
     await message.answer("Выберите холодильник для ввода температуры:", reply_markup=fridge_kb)
 
-@dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "enter_temp")
-async def temp_enter(message: types.Message):
+@dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "choose_fridge")
+async def temp_fridge_choice(message: types.Message):
     floor = user_temps[message.from_user.id]["floor"]
     available_fridges = fridges[floor]
-
     if message.text not in available_fridges:
         await message.answer("Выберите холодильник из списка.", reply_markup=None)
         return
-
-    # Сохраняем выбранный холодильник в текущем состоянии
+    user_temps[message.from_user.id]["state"] = "input_temp"
     user_temps[message.from_user.id]["current_fridge"] = message.text
     await message.answer(f"Введите температуру для {message.text} (например 5):")
 
-@dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("current_fridge"))
+@dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "input_temp")
 async def temp_save(message: types.Message):
     try:
         temp = message.text.strip()
+        if not temp.replace(".", "", 1).isdigit():  # проверка что число
+            await message.answer("Введите корректное число температуры.")
+            return
         fridge = user_temps[message.from_user.id]["current_fridge"]
         floor = user_temps[message.from_user.id]["floor"]
 
@@ -233,12 +234,13 @@ async def temp_save(message: types.Message):
         fridges[floor].remove(fridge)
         user_temps[message.from_user.id].pop("current_fridge")
 
-        # Если есть еще холодильники, показываем их кнопки
         if fridges[floor]:
+            # Показываем оставшиеся холодильники
             fridge_kb = ReplyKeyboardMarkup(resize_keyboard=True)
             for f in fridges[floor]:
                 fridge_kb.add(f)
             fridge_kb.add("⬅ Назад")
+            user_temps[message.from_user.id]["state"] = "choose_fridge"
             await message.answer("Выберите следующий холодильник:", reply_markup=fridge_kb)
         else:
             await message.answer("✅ Все температуры на этом этаже введены.", reply_markup=main_kb)
@@ -246,7 +248,6 @@ async def temp_save(message: types.Message):
 
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
-
 # ================= НАЗАД =================
 @dp.message_handler(lambda m: m.text == "⬅ Назад")
 async def go_back(message: types.Message):
