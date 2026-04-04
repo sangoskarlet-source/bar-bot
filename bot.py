@@ -6,8 +6,8 @@ from aiogram.utils import executor
 from datetime import datetime
 
 # ================= Настройки =================
-BOT_TOKEN = "8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ"
-SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
