@@ -1,115 +1,100 @@
 import os
 import requests
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.utils import executor
 from datetime import datetime
-import re
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
+# ================= Настройки =================
+BOT_TOKEN = "8553414858:AAGVIXM8rCDWMpeq-Nu3yHPZazNtJX6w_sQ"
+SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# ================= Клавиатуры =================
+# ================= КЛАВИАТУРЫ =================
 main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-main_kb.add("📦 Перенос", "🗑 Списание")
-main_kb.add("🧹 Чеклист", "🌡 Журнал температур")
+main_kb.add("📦 Перенос")
+main_kb.add("🗑 Списание")
+main_kb.add("📸 Фото уборки")
+main_kb.add("🧹 Чеклист")
+main_kb.add("🌡 Журнал температур")
+main_kb.add("🧹 Ежедневная уборка")
 
 direction_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-direction_kb.add("Кухня → Бар", "Бар → Кухня", "⬅ Назад")
+direction_kb.add("Кухня → Бар", "Бар → Кухня")
+direction_kb.add("⬅ Назад")
 
 back_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 back_kb.add("⬅ Назад")
 
-floor_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-floor_kb.add("1 этаж", "2 этаж", "⬅ Назад")
+checklist_main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+checklist_main_kb.add("Лайн чек заготовок", "Закрытие смены", "⬅ Назад")
 
-# ================= Данные =================
-checklist_items = [
-    "Лайн чек заготовок", "Фото бара", "Крышки закрыты", "Стоп-лист проверен",
-    "Баклахи с водой", "Поверхности протерты", "Посуда в баре",
-    "Кофе машина", "Раковины", "Кассовый узел", "Зона алкоголя", "Порядок на складе"
-]
+checklist_close_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+checklist_close_kb.add(
+    "Фото бара отправлено",
+    "Крышки закрыты",
+    "Стоп-лист проверен",
+    "Баклахи с водой",
+    "Поверхности протерты",
+    "Посуда в баре",
+    "Кофе машина",
+    "Раковины",
+    "Кассовый узел",
+    "Зона алкоголя",
+    "Порядок на складе",
+    "Готово",
+    "⬅ Назад"
+)
 
-floor1_items = [
+temperature_main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+temperature_main_kb.add("1 этаж", "2 этаж", "⬅ Назад")
+
+floor1_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+floor1_kb.add(
     "Холодильник с водой",
     "Холодильник с вином",
     "Морозильник",
     "Холодильник в баре",
-    "Холодильник с открытым вином"
-]
+    "Холодильник с открытым вином",
+    "⬅ Назад"
+)
 
-floor2_items = [
+floor2_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+floor2_kb.add(
     "Холодильник с вином",
-    "Холодильник пепси",
+    "Холодильник Пепси",
     "Морозильник",
     "Холодильник для фруктов",
     "Сережа",
-    "Морозильный ларь"
-]
+    "Морозильный ларь",
+    "⬅ Назад"
+)
 
 user_states = {}
+temp_cache = {}  # Для временного хранения ввода температуры
 
-# ================= Работа с таблицей =================
-def send_to_sheet(sheet, data):
+# ================= ОТПРАВКА В SHEETS =================
+def send_to_sheet(sheet, data: dict):
     try:
-        requests.post(SHEET_WEBHOOK_URL, json={
-            "sheet": sheet,
-            "text": data
-        }, timeout=10)
+        requests.post(SHEET_WEBHOOK_URL, json={**data, "sheet": sheet}, timeout=10)
     except Exception as e:
-        print("Ошибка:", e)
+        print("Ошибка отправки:", e)
 
-def get_today_workers():
-    try:
-        res = requests.get(SHEET_WEBHOOK_URL)
-        return res.json()
-    except Exception as e:
-        print("Ошибка получения графика:", e)
-        return []
-
-# ================= НАПОМИНАНИЯ =================
-async def send_reminders(mode):
-    workers = get_today_workers()
-
-    for w in workers:
-        user_id = int(w["id"])
-        shift = w["shift"]
-
-        try:
-            # Температуры (А)
-            if mode == "temp_A" and "А" in shift:
-                await bot.send_message(user_id, "🌡 Сними температуры (смена А)")
-
-            # Температуры (Б)
-            if mode == "temp_B" and "Б" in shift:
-                await bot.send_message(user_id, "🌡 Сними температуры (смена Б)")
-
-            # Чеклист (все)
-            if mode == "checklist" and ("А" in shift or "Б" in shift):
-                await bot.send_message(user_id, "🧹 Заполни чеклист перед закрытием")
-
-        except Exception as e:
-            print(f"Ошибка отправки {user_id}: {e}")
-
-# ================= Планировщик =================
-async def on_startup(dp):
-    scheduler = AsyncIOScheduler()
-
-    scheduler.add_job(send_reminders, "cron", hour=11, minute=30, args=["temp_A"])
-    scheduler.add_job(send_reminders, "cron", hour=18, minute=30, args=["temp_B"])
-    scheduler.add_job(send_reminders, "cron", hour=23, minute=30, args=["checklist"])
-
-    scheduler.start()
-
-# ================= Старт =================
+# ================= НАЧАЛО =================
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
     await message.answer("Выберите действие:", reply_markup=main_kb)
 
-# ================= Перенос =================
+# ================= НАЗАД =================
+@dp.message_handler(lambda m: m.text == "⬅ Назад")
+async def go_back(message: types.Message):
+    user_states.pop(message.from_user.id, None)
+    temp_cache.pop(message.from_user.id, None)
+    await message.answer("Главное меню:", reply_markup=main_kb)
+
+# ================= ПЕРЕНОС =================
 @dp.message_handler(lambda m: m.text == "📦 Перенос")
 async def transfer_start(message: types.Message):
     user_states[message.from_user.id] = {"state": "transfer_direction"}
@@ -121,97 +106,162 @@ async def transfer_direction(message: types.Message):
         "state": "transfer_text",
         "direction": message.text
     }
-    await message.answer("Напишите что переносим:", reply_markup=back_kb)
+    await message.answer("Напишите что и сколько переносим:", reply_markup=back_kb)
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "transfer_text")
 async def transfer_save(message: types.Message):
     direction = user_states[message.from_user.id]["direction"]
-
-    for line in message.text.split("\n"):
+    lines = (message.text or "").split("\n")
+    for line in lines:
         line = line.strip()
         if not line:
             continue
-
-        num = re.search(r"\d+([.,]\d+)?", line)
-        weight = num.group(0) if num else ""
-        position = re.sub(r"\d+([.,]\d+)?", "", line).strip()
-
+        number_match = line.replace(",", ".").split()
+        weight = ""
+        position = line
+        for word in number_match:
+            if word.replace(".", "").isdigit():
+                weight = word
+                position = position.replace(word, "").strip()
         send_to_sheet("Переносы", {
+            "ID": message.from_user.id,
             "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
             "Сотрудник": message.from_user.full_name,
             "Направление": direction,
             "Позиция": position,
             "Вес": weight
         })
-
-    await message.answer("✅ Готово", reply_markup=main_kb)
+    await message.answer("✅ Перенос записан", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
-# ================= Списание =================
+# ================= СПИСАНИЕ =================
 @dp.message_handler(lambda m: m.text == "🗑 Списание")
 async def writeoff_start(message: types.Message):
     user_states[message.from_user.id] = {"state": "writeoff"}
-    await message.answer("Напишите списание:", reply_markup=back_kb)
+    await message.answer("Напишите что списываем:", reply_markup=back_kb)
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "writeoff")
 async def writeoff_save(message: types.Message):
-    for line in message.text.split("\n"):
+    lines = (message.text or "").split("\n")
+    for line in lines:
         line = line.strip()
         if not line:
             continue
-
-        num = re.search(r"\d+([.,]\d+)?", line)
-        weight = num.group(0) if num else ""
-        position = re.sub(r"\d+([.,]\d+)?", "", line).strip()
-
+        number_match = line.replace(",", ".").split()
+        weight = ""
+        position = line
+        for word in number_match:
+            if word.replace(".", "").isdigit():
+                weight = word
+                position = position.replace(word, "").strip()
         send_to_sheet("Списания", {
+            "ID": message.from_user.id,
             "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
             "Сотрудник": message.from_user.full_name,
             "Позиция": position,
             "Вес": weight
         })
-
-    await message.answer("✅ Готово", reply_markup=main_kb)
+    await message.answer("✅ Списание записано", reply_markup=main_kb)
     user_states.pop(message.from_user.id)
 
-# ================= Чеклист =================
+# ================= ФОТО =================
+@dp.message_handler(lambda m: m.text == "📸 Фото уборки")
+async def daily_cleaning_photo(message: types.Message):
+    user_states[message.from_user.id] = {"state": "photo"}
+    await message.answer("Отправьте фото:", reply_markup=back_kb)
+
+@dp.message_handler(content_types=types.ContentType.PHOTO)
+async def save_photo(message: types.Message):
+    state = user_states.get(message.from_user.id, {}).get("state")
+    if state not in ["photo", "daily_cleaning"]:
+        return
+    file_id = message.photo[-1].file_id
+    send_to_sheet("Фото", {
+        "ID": message.from_user.id,
+        "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
+        "Сотрудник": message.from_user.full_name,
+        "Файл": file_id
+    })
+    await message.answer("✅ Фото сохранено", reply_markup=main_kb)
+    user_states.pop(message.from_user.id)
+
+# ================= ЧЕКЛИСТ =================
 @dp.message_handler(lambda m: m.text == "🧹 Чеклист")
 async def checklist_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "checklist", "checked": set()}
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for item in checklist_items:
-        kb.add(item)
-    kb.add("Готово", "⬅ Назад")
-    await message.answer("Отметьте выполненное:", reply_markup=kb)
+    user_states[message.from_user.id] = {"state": "checklist"}
+    await message.answer("Выберите:", reply_markup=checklist_main_kb)
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "checklist")
 async def checklist_handler(message: types.Message):
-    if message.text == "Готово":
-        state = user_states[message.from_user.id]
-        checked = state["checked"]
-
-        data = {
+    text = message.text
+    if text == "Лайн чек заготовок":
+        send_to_sheet("Чеклист", {
             "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
-            "Сотрудник": message.from_user.full_name
-        }
+            "Сотрудник": message.from_user.full_name,
+            "Лайн чек заготовок": "Выполнено"
+        })
+        await message.answer("✅ Лайн чек заготовок отмечен", reply_markup=checklist_main_kb)
+    elif text == "Закрытие смены":
+        user_states[message.from_user.id]["state"] = "checklist_close"
+        await message.answer("Выберите пункт:", reply_markup=checklist_close_kb)
+    elif text == "⬅ Назад":
+        await go_back(message)
 
-        for item in checklist_items:
-            data[item] = "✅" if item in checked else "❌"
-
-        send_to_sheet("Чеклист", data)
-        await message.answer("✅ Отправлено", reply_markup=main_kb)
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "checklist_close")
+async def checklist_close(message: types.Message):
+    text = message.text
+    if text == "Готово":
+        await message.answer("✅ Закрытие смены завершено", reply_markup=main_kb)
         user_states.pop(message.from_user.id)
         return
+    if text in checklist_close_kb.keyboard[0]:
+        send_to_sheet("Чеклист", {
+            "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "Сотрудник": message.from_user.full_name,
+            text: "Выполнено"
+        })
+        await message.answer(f"✅ {text} отмечено", reply_markup=checklist_close_kb)
 
-    if message.text == "⬅ Назад":
-        user_states.pop(message.from_user.id)
-        await message.answer("Меню", reply_markup=main_kb)
-        return
+# ================= ЖУРНАЛ ТЕМПЕРАТУР =================
+@dp.message_handler(lambda m: m.text == "🌡 Журнал температур")
+async def temp_main(message: types.Message):
+    user_states[message.from_user.id] = {"state": "temp_main"}
+    await message.answer("Выберите этаж:", reply_markup=temperature_main_kb)
 
-    user_states[message.from_user.id]["checked"].add(message.text)
-    await message.answer(f"✅ {message.text}")
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_main")
+async def temp_floor(message: types.Message):
+    if message.text == "1 этаж":
+        user_states[message.from_user.id]["state"] = "temp_floor1"
+        await message.answer("Выберите холодильник:", reply_markup=floor1_kb)
+    elif message.text == "2 этаж":
+        user_states[message.from_user.id]["state"] = "temp_floor2"
+        await message.answer("Выберите холодильник:", reply_markup=floor2_kb)
+    elif message.text == "⬅ Назад":
+        await go_back(message)
 
-# ================= Запуск =================
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") in ["temp_floor1", "temp_floor2"])
+async def temp_select(message: types.Message):
+    user_states[message.from_user.id]["selected_fridge"] = message.text
+    await message.answer("Введите температуру:")
+
+    user_states[message.from_user.id]["state"] = "temp_input"
+
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_input")
+async def temp_input(message: types.Message):
+    fridge = user_states[message.from_user.id]["selected_fridge"]
+    temp = message.text
+    floor = "1 этаж" if user_states[message.from_user.id]["state"] == "temp_input" else "2 этаж"
+    send_to_sheet(floor, {
+        "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
+        "Сотрудник": message.from_user.full_name,
+        fridge: temp
+    })
+    await message.answer(f"✅ {fridge}: {temp}", reply_markup=main_kb)
+    user_states.pop(message.from_user.id)
+
+# ================= WEBHOOK =================
+async def on_startup(dp):
+    pass  # Если нужен вебхук, вставь код настройки здесь
+
 if __name__ == "__main__":
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(dp, skip_updates=True)
