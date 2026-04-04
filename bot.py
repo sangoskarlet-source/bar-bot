@@ -167,6 +167,7 @@ async def photo_save(message: types.Message):
 
 # ================= ЖУРНАЛ ТЕМПЕРАТУР =================
 from aiogram.types import ReplyKeyboardMarkup
+import requests
 
 # Список холодильников по этажам
 fridges = {
@@ -181,11 +182,29 @@ floor_kb.add("1 этаж", "2 этаж", "⬅ Назад")
 # Состояние пользователей для температурного режима
 user_temps = {}
 
+# Функция отправки в Google Sheets
+def send_to_sheet(sheet, user, user_id, temps_dict):
+    temp_text = ", ".join([f"{k}: {v}" for k, v in temps_dict.items()])
+    try:
+        requests.post(
+            SHEET_WEBHOOK_URL,
+            json={
+                "sheet": sheet,
+                "user": f"{user} ({user_id})",
+                "text": temp_text
+            },
+            timeout=10
+        )
+    except Exception as e:
+        print("Ошибка отправки в Google Sheets:", e)
+
+# Старт температурного режима
 @dp.message_handler(lambda m: m.text == "🌡 Журнал температур")
 async def temp_start(message: types.Message):
     user_temps[message.from_user.id] = {"state": "choose_floor"}
     await message.answer("Выберите этаж для ввода температур:", reply_markup=floor_kb)
 
+# Выбор этажа
 @dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "choose_floor")
 async def temp_floor_choice(message: types.Message):
     if message.text not in fridges:
@@ -199,6 +218,7 @@ async def temp_floor_choice(message: types.Message):
     fridge_kb.add("⬅ Назад")
     await message.answer("Выберите холодильник для ввода температуры:", reply_markup=fridge_kb)
 
+# Выбор холодильника
 @dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "choose_fridge")
 async def temp_fridge_choice(message: types.Message):
     floor = user_temps[message.from_user.id]["floor"]
@@ -210,6 +230,7 @@ async def temp_fridge_choice(message: types.Message):
     user_temps[message.from_user.id]["current_fridge"] = message.text
     await message.answer(f"Введите температуру для {message.text} (например 5):")
 
+# Ввод температуры и сохранение
 @dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "input_temp")
 async def temp_save(message: types.Message):
     try:
