@@ -166,40 +166,86 @@ async def photo_save(message: types.Message):
     user_states.pop(message.from_user.id)
 
 # ================= ЖУРНАЛ ТЕМПЕРАТУР =================
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+# Список холодильников по этажам
 fridges = {
     "1 этаж": ["Холодильник с водой", "Холодильник с вином", "Морозильник", "Холодильник в баре", "Холодильник с открытым вином"],
     "2 этаж": ["Холодильник с вином", "Холодильник пепси", "Морозильник", "Холодильник для фруктов", "Сережа", "Морозильный ларь"]
 }
 
+# Клавиатура для выбора этажа
+floor_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+floor_kb.add("1 этаж", "2 этаж", "⬅ Назад")
+
+# Состояние пользователей для температурного режима
+user_temps = {}
+
 @dp.message_handler(lambda m: m.text == "🌡 Журнал температур")
 async def temp_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "temp_floor"}
-    await message.answer("Выберите этаж:", reply_markup=floor_kb)
+    user_temps[message.from_user.id] = {"state": "choose_floor"}
+    await message.answer("Выберите этаж для ввода температур:", reply_markup=floor_kb)
 
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_floor")
-async def temp_floor(message: types.Message):
+@dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "choose_floor")
+async def temp_floor_choice(message: types.Message):
     if message.text not in fridges:
         return
-    user_states[message.from_user.id] = {"state": "temp_input", "floor": message.text}
-    fridge_list = "\n".join(fridges[message.text])
-    await message.answer(f"Введите температуру и укажите холодильник:\n{fridge_list}\nПример: 5 Холодильник с водой", reply_markup=back_kb)
+    user_temps[message.from_user.id]["state"] = "enter_temp"
+    user_temps[message.from_user.id]["floor"] = message.text
+    # Кнопки холодильников для выбора
+    fridge_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    for f in fridges[message.text]:
+        fridge_kb.add(f)
+    fridge_kb.add("⬅ Назад")
+    await message.answer("Выберите холодильник для ввода температуры:", reply_markup=fridge_kb)
 
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_input")
-async def temp_save(message: types.Message):
-    floor = user_states[message.from_user.id]["floor"]
-    text = message.text
-    parts = text.split(" ", 1)
-    if len(parts) != 2:
-        await message.answer("Ошибка формата. Пример: 5 Холодильник с водой", reply_markup=back_kb)
+@dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("state") == "enter_temp")
+async def temp_enter(message: types.Message):
+    floor = user_temps[message.from_user.id]["floor"]
+    available_fridges = fridges[floor]
+
+    if message.text not in available_fridges:
+        await message.answer("Выберите холодильник из списка.", reply_markup=None)
         return
-    temp, fridge = parts
-    send_to_sheet(
-        f"{floor}",
-        message.from_user.full_name,
-        message.from_user.id,
-        {fridge: temp}
-    )
-    await message.answer(f"✅ Температура {temp} записана для {fridge}", reply_markup=back_kb)
+
+    # Сохраняем выбранный холодильник в текущем состоянии
+    user_temps[message.from_user.id]["current_fridge"] = message.text
+    await message.answer(f"Введите температуру для {message.text} (например 5):")
+
+@dp.message_handler(lambda m: user_temps.get(m.from_user.id, {}).get("current_fridge"))
+async def temp_save(message: types.Message):
+    try:
+        temp = message.text.strip()
+        fridge = user_temps[message.from_user.id]["current_fridge"]
+        floor = user_temps[message.from_user.id]["floor"]
+
+        # Отправляем в Google Sheets
+        send_to_sheet(
+            floor,
+            message.from_user.full_name,
+            message.from_user.id,
+            {fridge: temp}
+        )
+
+        await message.answer(f"✅ Температура {temp} записана для {fridge}")
+
+        # Убираем холодильник из доступных для этого пользователя
+        fridges[floor].remove(fridge)
+        user_temps[message.from_user.id].pop("current_fridge")
+
+        # Если есть еще холодильники, показываем их кнопки
+        if fridges[floor]:
+            fridge_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+            for f in fridges[floor]:
+                fridge_kb.add(f)
+            fridge_kb.add("⬅ Назад")
+            await message.answer("Выберите следующий холодильник:", reply_markup=fridge_kb)
+        else:
+            await message.answer("✅ Все температуры на этом этаже введены.", reply_markup=main_kb)
+            user_temps.pop(message.from_user.id)
+
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}")
 
 # ================= НАЗАД =================
 @dp.message_handler(lambda m: m.text == "⬅ Назад")
