@@ -22,36 +22,41 @@ main_kb.add("🌡 Журнал температур", "🧹 Ежедневная
 direction_kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
 direction_kb.add("Кухня → Бар", "Бар → Кухня", "⬅ Назад")
 
-checklist_kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-checklist_kb.add("Лайн чек заготовок", "Закрытие смены", "⬅ Назад")
-
-temp_floor_kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-temp_floor_kb.add("1 этаж", "2 этаж", "⬅ Назад")
-
+# Список холодильников (Проверь, чтобы в таблице было ТАК ЖЕ)
 fridges = {
-    "1 этаж": ["Холодильник с водой", "Холодильник с вином", "Морозильник", "Холодильник в баре", "Холодильник с открытым вином"],
-    "2 этаж": ["Холодильник с вином", "Холодильник Пепси", "Морозильник", "Холодильник для фруктов", "Сережа", "Морозильный ларь"]
+    "1 этаж": [
+        "Холодильник с водой", 
+        "Холодильник с вином", 
+        "Морозильник", 
+        "Холодильник в баре", 
+        "Холодильник с открытым вином"
+    ],
+    "2 этаж": [
+        "Холодильник с вином", 
+        "Холодильник Пепси", 
+        "Морозильник", 
+        "Холодильник для фруктов", 
+        "Сережа", 
+        "Морозильный ларь"
+    ]
 }
 
 user_states = {}  
 temp_pending = {} 
 
-# ================= ФУНКЦИЯ ОТПРАВКИ =================
-
 def send_to_sheet(payload):
     try:
         res = requests.post(SHEET_WEBHOOK_URL, json=payload, timeout=10)
-        print(f"Ответ Google: {res.text}")
-        return True
+        return res.text
     except Exception as e:
-        print(f"Ошибка отправки: {e}")
-        return False
+        print(f"Ошибка: {e}")
+        return "ERROR"
 
-# ================= ОБРАБОТКА КНОПОК =================
+# ================= ОБРАБОТЧИКИ =================
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-    await message.answer("Выберите действие:", reply_markup=main_kb)
+    await message.answer("Система готова. Выберите действие:", reply_markup=main_kb)
 
 @dp.message_handler(lambda m: m.text == "⬅ Назад")
 async def go_back(message: types.Message):
@@ -59,132 +64,97 @@ async def go_back(message: types.Message):
     temp_pending.pop(message.from_user.id, None)
     await message.answer("Главное меню:", reply_markup=main_kb)
 
-# ---------- ПЕРЕНОС ----------
-@dp.message_handler(lambda m: m.text == "📦 Перенос")
-async def transfer_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "transfer_direction"}
-    await message.answer("Выберите направление:", reply_markup=direction_kb)
+# ---------- ПЕРЕНОС / СПИСАНИЕ ----------
+@dp.message_handler(lambda m: m.text in ["📦 Перенос", "🗑 Списание"])
+async def process_start(message: types.Message):
+    mode = "transfer" if "Перенос" in message.text else "writeoff"
+    if mode == "transfer":
+        user_states[message.from_user.id] = {"state": "transfer_direction"}
+        await message.answer("Выберите направление:", reply_markup=direction_kb)
+    else:
+        user_states[message.from_user.id] = {"state": "writeoff_text"}
+        await message.answer("Что и сколько списываем?", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("⬅ Назад"))
 
 @dp.message_handler(lambda m: m.text in ["Кухня → Бар", "Бар → Кухня"])
-async def transfer_direction(message: types.Message):
+async def transfer_dir(message: types.Message):
     user_states[message.from_user.id] = {"state": "transfer_text", "direction": message.text}
-    await message.answer("Напишите что и сколько (например: Молоко 5):", 
-                         reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("⬅ Назад"))
+    await message.answer("Введите название и количество:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("⬅ Назад"))
 
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "transfer_text")
-async def transfer_save(message: types.Message):
-    user_id = message.from_user.id
-    direction = user_states[user_id]["direction"]
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") in ["transfer_text", "writeoff_text"])
+async def save_item(message: types.Message):
+    u_id = message.from_user.id
+    state_data = user_states[u_id]
     text = message.text.strip()
     
-    # Парсим число (количество) и текст (название)
     weight_match = re.search(r'(\d+[.,]?\d*)', text)
     weight = weight_match.group(1) if weight_match else "?"
     item_name = re.sub(r'(\d+[.,]?\d*)', '', text).strip()
 
-    send_to_sheet({
-        "sheet": "Переносы",
-        "user": message.from_user.full_name,
-        "item": item_name,
-        "qty": weight,
-        "direction": direction
-    })
-    
-    await message.answer(f"✅ Записано: {item_name} ({weight})", reply_markup=main_kb)
-    user_states.pop(user_id)
-
-# ---------- СПИСАНИЕ ----------
-@dp.message_handler(lambda m: m.text == "🗑 Списание")
-async def writeoff_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "writeoff"}
-    await message.answer("Напишите что и сколько списываем:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("⬅ Назад"))
-
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "writeoff")
-async def writeoff_save(message: types.Message):
-    text = message.text.strip()
-    weight_match = re.search(r'(\d+[.,]?\d*)', text)
-    weight = weight_match.group(1) if weight_match else "?"
-    item_name = re.sub(r'(\d+[.,]?\d*)', '', text).strip()
-
-    send_to_sheet({
-        "sheet": "Списания",
+    payload = {
+        "sheet": "Переносы" if state_data["state"] == "transfer_text" else "Списания",
         "user": message.from_user.full_name,
         "item": item_name,
         "qty": weight
-    })
-    await message.answer(f"✅ Списание: {item_name} ({weight})", reply_markup=main_kb)
-    user_states.pop(message.from_user.id)
+    }
+    if "direction" in state_data: payload["direction"] = state_data["direction"]
 
-# ---------- ЖУРНАЛ ТЕМПЕРАТУР ----------
+    send_to_sheet(payload)
+    await message.answer(f"✅ Записано: {item_name} ({weight})", reply_markup=main_kb)
+    user_states.pop(u_id)
+
+# ---------- ТЕМПЕРАТУРЫ ----------
 @dp.message_handler(lambda m: m.text == "🌡 Журнал температур")
 async def temp_start(message: types.Message):
     user_states[message.from_user.id] = {"state": "temp_floor"}
-    await message.answer("Выберите этаж:", reply_markup=temp_floor_kb)
+    await message.answer("Выберите этаж:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("1 этаж", "2 этаж", "⬅ Назад"))
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_floor")
-async def temp_choose_floor(message: types.Message):
+async def temp_floor(message: types.Message):
     floor = message.text
     if floor in ["1 этаж", "2 этаж"]:
         user_states[message.from_user.id] = {"state": "temp_fridge", "floor": floor}
         temp_pending[message.from_user.id] = fridges[floor].copy()
         
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        for f in temp_pending[message.from_user.id]:
-            kb.insert(f)
+        for f in temp_pending[message.from_user.id]: kb.insert(f)
         kb.add("⬅ Назад")
-        await message.answer("Выберите холодильник:", reply_markup=kb)
+        await message.answer(f"Этаж {floor}. Выберите холодильник:", reply_markup=kb)
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_fridge")
-async def temp_input(message: types.Message):
-    user_id = message.from_user.id
-    fridge_choice = message.text
-    if fridge_choice not in temp_pending.get(user_id, []):
-        await message.answer("Используйте кнопки для выбора!")
-        return
-        
-    user_states[user_id]["state"] = "temp_value"
-    user_states[user_id]["fridge_choice"] = fridge_choice
-    await message.answer(f"Температура для {fridge_choice}:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("⬅ Назад"))
+async def temp_fridge_choice(message: types.Message):
+    u_id = message.from_user.id
+    if message.text not in temp_pending.get(u_id, []):
+        return await message.answer("Выберите из списка!")
+    
+    user_states[u_id]["state"] = "temp_value"
+    user_states[u_id]["fridge_choice"] = message.text
+    await message.answer(f"Температура для '{message.text}':", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("⬅ Назад"))
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_value")
-async def temp_save(message: types.Message):
-    user_id = message.from_user.id
-    temp_val = message.text
-    floor = user_states[user_id]["floor"]
-    fridge = user_states[user_id]["fridge_choice"]
-
+async def temp_val_save(message: types.Message):
+    u_id = message.from_user.id
+    data = user_states[u_id]
+    
     send_to_sheet({
-        "sheet": floor,
+        "sheet": data["floor"],
         "user": message.from_user.full_name,
         "date": datetime.now().strftime("%d.%m.%Y"),
-        "fridge": fridge,
-        "temp": temp_val
+        "fridge": data["fridge_choice"],
+        "temp": message.text
     })
 
-    temp_pending[user_id].remove(fridge)
+    temp_pending[u_id].remove(data["fridge_choice"])
 
-    if temp_pending[user_id]:
+    if temp_pending[u_id]:
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        for f in temp_pending[user_id]:
-            kb.insert(f)
+        for f in temp_pending[u_id]: kb.insert(f)
         kb.add("⬅ Назад")
-        user_states[user_id]["state"] = "temp_fridge"
-        await message.answer(f"Записано {temp_val}°. Следующий:", reply_markup=kb)
+        user_states[u_id]["state"] = "temp_fridge"
+        await message.answer("Записано. Следующий:", reply_markup=kb)
     else:
-        user_states.pop(user_id)
-        temp_pending.pop(user_id)
-        await message.answer("✅ Все данные внесены", reply_markup=main_kb)
+        user_states.pop(u_id)
+        temp_pending.pop(u_id)
+        await message.answer("✅ Все температуры внесены!", reply_markup=main_kb)
 
-# ---------- ЗАПУСК ----------
 if __name__ == "__main__":
-    if os.getenv("WEBHOOK_URL"):
-        executor.start_webhook(
-            dispatcher=dp,
-            webhook_path="",
-            on_startup=lambda d: bot.set_webhook(os.getenv("WEBHOOK_URL")),
-            skip_updates=True,
-            host="0.0.0.0",
-            port=int(os.environ.get("PORT", 8080))
-        )
-    else:
-        executor.start_polling(dp, skip_updates=True)
+    executor.start_polling(dp, skip_updates=True)
