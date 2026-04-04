@@ -104,4 +104,53 @@ async def closing_process(message: types.Message):
 async def temp_start(message: types.Message):
     await message.answer("Выберите этаж:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("1 этаж", "2 этаж", "⬅ Назад"))
 
-@dp.message_handler(lambda m: m.text in ["1 этаж", "2 э
+@dp.message_handler(lambda m: m.text in ["1 этаж", "2 этаж"])
+async def temp_floor_sel(message: types.Message):
+    u_id = message.from_user.id
+    floor = message.text
+    # ГЕНЕРИРУЕМ ID СЕССИИ для замера температур
+    session_id = f"TMP_{u_id}_{int(time.time())}"
+    user_states[u_id] = {"state": "temp_fridge", "floor": floor, "session_id": session_id}
+    temp_pending[u_id] = fridges[floor].copy()
+    
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    for f in temp_pending[u_id]: kb.insert(f)
+    kb.add("⬅ Назад")
+    await message.answer(f"Этаж {floor}. Выберите холодильник:", reply_markup=kb)
+
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_fridge")
+async def temp_fridge_choice(message: types.Message):
+    u_id = message.from_user.id
+    if message.text not in temp_pending.get(u_id, []): return
+    user_states[u_id]["state"] = "temp_value"
+    user_states[u_id]["fridge_choice"] = message.text
+    await message.answer(f"Градусы для {message.text}:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("⬅ Назад"))
+
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_value")
+async def temp_val_save(message: types.Message):
+    u_id = message.from_user.id
+    data = user_states[u_id]
+    payload = {
+        "sheet": data["floor"], 
+        "user": message.from_user.full_name, 
+        "session_id": data["session_id"], # Передаем ID
+        "fridge": data["fridge_choice"], 
+        "temp": message.text
+    }
+    asyncio.create_task(send_to_sheet_async(payload))
+
+    temp_pending[u_id].remove(data["fridge_choice"])
+    if temp_pending[u_id]:
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        for f in temp_pending[u_id]: kb.insert(f)
+        kb.add("⬅ Назад")
+        user_states[u_id]["state"] = "temp_fridge"
+        await message.answer(f"Записано {message.text}°. Следующий:", reply_markup=kb)
+    else:
+        user_states.pop(u_id)
+        await message.answer("✅ Температуры заполнены!", reply_markup=get_main_kb())
+
+# (Переносы и списания остаются без изменений, там сессии не нужны)
+
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)
