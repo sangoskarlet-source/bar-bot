@@ -168,58 +168,83 @@ async def checklist_handler(message: types.Message):
     user_states[message.from_user.id]["checked"].add(message.text)
     await message.answer(f"✅ {message.text}")
 
-# ================= Температуры =================
+# ================= ЖУРНАЛ ТЕМПЕРАТУР =================
+
 @dp.message_handler(lambda m: m.text == "🌡 Журнал температур")
 async def temp_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "floor"}
+    user_states[message.from_user.id] = {"state": "temp_floor"}
     await message.answer("Выберите этаж:", reply_markup=floor_kb)
 
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "floor")
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_floor")
 async def temp_floor(message: types.Message):
     if message.text == "⬅ Назад":
         user_states.pop(message.from_user.id)
         await message.answer("Меню", reply_markup=main_kb)
         return
 
-    user_states[message.from_user.id] = {
-        "state": "temp",
-        "floor": message.text
-    }
-    await message.answer("Введите температуру:")
-
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp")
-async def temp_value(message: types.Message):
-    user_states[message.from_user.id]["value"] = message.text
-
-    floor = user_states[message.from_user.id]["floor"]
+    floor = message.text
     items = floor1_items if floor == "1 этаж" else floor2_items
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     for i in items:
         kb.add(i)
-    kb.add("⬅ Назад")
+    kb.add("Готово", "⬅ Назад")
 
-    user_states[message.from_user.id]["state"] = "place"
+    user_states[message.from_user.id] = {
+        "state": "temp_select",
+        "floor": floor,
+        "data": {},
+        "current": None
+    }
+
     await message.answer("Выберите холодильник:", reply_markup=kb)
 
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "place")
-async def temp_save(message: types.Message):
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_select")
+async def temp_select(message: types.Message):
+    state = user_states[message.from_user.id]
+
     if message.text == "⬅ Назад":
         user_states.pop(message.from_user.id)
         await message.answer("Меню", reply_markup=main_kb)
         return
 
+    if message.text == "Готово":
+        data = {
+            "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "Сотрудник": message.from_user.full_name
+        }
+
+        data.update(state["data"])
+
+        send_to_sheet(state["floor"], data)
+
+        await message.answer("✅ Температуры отправлены", reply_markup=main_kb)
+        user_states.pop(message.from_user.id)
+        return
+
+    state["current"] = message.text
+    state["state"] = "temp_input"
+
+    await message.answer(f"Введите температуру для: {message.text}")
+
+@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_input")
+async def temp_input(message: types.Message):
     state = user_states[message.from_user.id]
 
-    send_to_sheet(state["floor"], {
-        "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
-        "Сотрудник": message.from_user.full_name,
-        "Холодильник": message.text,
-        "Температура": state["value"]
-    })
+    fridge = state["current"]
+    state["data"][fridge] = message.text
 
-    await message.answer("✅ Записано", reply_markup=main_kb)
-    user_states.pop(message.from_user.id)
+    floor = state["floor"]
+    items = floor1_items if floor == "1 этаж" else floor2_items
+
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    for i in items:
+        kb.add(i)
+    kb.add("Готово", "⬅ Назад")
+
+    state["state"] = "temp_select"
+
+    await message.answer(f"✅ {fridge}: {message.text}", reply_markup=kb)
 
 # ================= Запуск =================
 if __name__ == "__main__":
