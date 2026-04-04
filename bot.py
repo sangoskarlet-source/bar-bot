@@ -185,17 +185,18 @@ async def temp_floor(message: types.Message):
     floor = message.text
     items = floor1_items if floor == "1 этаж" else floor2_items
 
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for i in items:
-        kb.add(i)
-    kb.add("Готово", "⬅ Назад")
-
     user_states[message.from_user.id] = {
         "state": "temp_select",
         "floor": floor,
         "data": {},
+        "remaining": items.copy(),
         "current": None
     }
+
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    for i in items:
+        kb.add(i)
+    kb.add("Готово", "⬅ Назад")
 
     await message.answer("Выберите холодильник:", reply_markup=kb)
 
@@ -215,11 +216,14 @@ async def temp_select(message: types.Message):
         }
 
         data.update(state["data"])
-
         send_to_sheet(state["floor"], data)
 
         await message.answer("✅ Температуры отправлены", reply_markup=main_kb)
         user_states.pop(message.from_user.id)
+        return
+
+    if message.text not in state["remaining"]:
+        await message.answer("⚠ Уже заполнено или неверный выбор")
         return
 
     state["current"] = message.text
@@ -234,11 +238,11 @@ async def temp_input(message: types.Message):
     fridge = state["current"]
     state["data"][fridge] = message.text
 
-    floor = state["floor"]
-    items = floor1_items if floor == "1 этаж" else floor2_items
+    if fridge in state["remaining"]:
+        state["remaining"].remove(fridge)
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for i in items:
+    for i in state["remaining"]:
         kb.add(i)
     kb.add("Готово", "⬅ Назад")
 
