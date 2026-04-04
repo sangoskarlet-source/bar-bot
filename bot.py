@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup
 from datetime import datetime
 import re
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SHEET_WEBHOOK_URL = os.getenv("SHEET_WEBHOOK_URL")
@@ -51,7 +52,7 @@ floor2_items = [
 
 user_states = {}
 
-# ================= Отправка =================
+# ================= Работа с таблицей =================
 def send_to_sheet(sheet, data):
     try:
         requests.post(SHEET_WEBHOOK_URL, json={
@@ -60,6 +61,48 @@ def send_to_sheet(sheet, data):
         }, timeout=10)
     except Exception as e:
         print("Ошибка:", e)
+
+def get_today_workers():
+    try:
+        res = requests.get(SHEET_WEBHOOK_URL)
+        return res.json()
+    except Exception as e:
+        print("Ошибка получения графика:", e)
+        return []
+
+# ================= НАПОМИНАНИЯ =================
+async def send_reminders(mode):
+    workers = get_today_workers()
+
+    for w in workers:
+        user_id = int(w["id"])
+        shift = w["shift"]
+
+        try:
+            # Температуры (А)
+            if mode == "temp_A" and "А" in shift:
+                await bot.send_message(user_id, "🌡 Сними температуры (смена А)")
+
+            # Температуры (Б)
+            if mode == "temp_B" and "Б" in shift:
+                await bot.send_message(user_id, "🌡 Сними температуры (смена Б)")
+
+            # Чеклист (все)
+            if mode == "checklist" and ("А" in shift or "Б" in shift):
+                await bot.send_message(user_id, "🧹 Заполни чеклист перед закрытием")
+
+        except Exception as e:
+            print(f"Ошибка отправки {user_id}: {e}")
+
+# ================= Планировщик =================
+async def on_startup(dp):
+    scheduler = AsyncIOScheduler()
+
+    scheduler.add_job(send_reminders, "cron", hour=11, minute=30, args=["temp_A"])
+    scheduler.add_job(send_reminders, "cron", hour=18, minute=30, args=["temp_B"])
+    scheduler.add_job(send_reminders, "cron", hour=23, minute=30, args=["checklist"])
+
+    scheduler.start()
 
 # ================= Старт =================
 @dp.message_handler(commands=["start"])
@@ -168,89 +211,7 @@ async def checklist_handler(message: types.Message):
     user_states[message.from_user.id]["checked"].add(message.text)
     await message.answer(f"✅ {message.text}")
 
-# ================= ЖУРНАЛ ТЕМПЕРАТУР =================
-
-@dp.message_handler(lambda m: m.text == "🌡 Журнал температур")
-async def temp_start(message: types.Message):
-    user_states[message.from_user.id] = {"state": "temp_floor"}
-    await message.answer("Выберите этаж:", reply_markup=floor_kb)
-
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_floor")
-async def temp_floor(message: types.Message):
-    if message.text == "⬅ Назад":
-        user_states.pop(message.from_user.id)
-        await message.answer("Меню", reply_markup=main_kb)
-        return
-
-    floor = message.text
-    items = floor1_items if floor == "1 этаж" else floor2_items
-
-    user_states[message.from_user.id] = {
-        "state": "temp_select",
-        "floor": floor,
-        "data": {},
-        "remaining": items.copy(),
-        "current": None
-    }
-
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for i in items:
-        kb.add(i)
-    kb.add("Готово", "⬅ Назад")
-
-    await message.answer("Выберите холодильник:", reply_markup=kb)
-
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_select")
-async def temp_select(message: types.Message):
-    state = user_states[message.from_user.id]
-
-    if message.text == "⬅ Назад":
-        user_states.pop(message.from_user.id)
-        await message.answer("Меню", reply_markup=main_kb)
-        return
-
-    if message.text == "Готово":
-        data = {
-            "Дата": datetime.now().strftime("%d.%m.%Y %H:%M"),
-            "Сотрудник": message.from_user.full_name
-        }
-
-        data.update(state["data"])
-        send_to_sheet(state["floor"], data)
-
-        await message.answer("✅ Температуры отправлены", reply_markup=main_kb)
-        user_states.pop(message.from_user.id)
-        return
-
-    if message.text not in state["remaining"]:
-        await message.answer("⚠ Уже заполнено или неверный выбор")
-        return
-
-    state["current"] = message.text
-    state["state"] = "temp_input"
-
-    await message.answer(f"Введите температуру для: {message.text}")
-
-@dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "temp_input")
-async def temp_input(message: types.Message):
-    state = user_states[message.from_user.id]
-
-    fridge = state["current"]
-    state["data"][fridge] = message.text
-
-    if fridge in state["remaining"]:
-        state["remaining"].remove(fridge)
-
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for i in state["remaining"]:
-        kb.add(i)
-    kb.add("Готово", "⬅ Назад")
-
-    state["state"] = "temp_select"
-
-    await message.answer(f"✅ {fridge}: {message.text}", reply_markup=kb)
-
 # ================= Запуск =================
 if __name__ == "__main__":
     from aiogram import executor
-    executor.start_polling(dp, skip_updates=True)
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
