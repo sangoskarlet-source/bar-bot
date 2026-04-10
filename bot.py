@@ -207,32 +207,79 @@ async def temp_save(message: types.Message):
     else:
         user_states.pop(u_id); await message.answer("✅ Готово!", reply_markup=get_main_kb())
 
+# 1. Проверьте, что список точно совпадает с заголовками в таблице
+CLOSING_ITEMS = [
+    "Фото бара", "Крышки закрыты", "Стоп-лист проверен", 
+    "Баклахи с водой", "Поверхности протерты", "Посуда в баре", 
+    "Кофе машина", "Раковины", "Кассовый узел", 
+    "Зона алкоголя", "Порядок на складе"
+]
+
 # --- ЧЕКЛИСТ ---
+
 @dp.message_handler(lambda m: m.text == "🧹 Чеклист")
 async def check_start(message: types.Message):
-    await message.answer("Чеклист:", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("Закрытие смены", "⬅ Назад"))
+    # Кнопка для перехода к выбору конкретного чеклиста
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("Закрытие смены", "⬅ Назад")
+    await message.answer("Выберите тип чеклиста:", reply_markup=kb)
 
 @dp.message_handler(lambda m: m.text == "Закрытие смены")
 async def closing_start(message: types.Message):
     u_id = message.from_user.id
+    # Устанавливаем состояние и создаем копию списка задач для пользователя
     user_states[u_id] = {"state": "cls", "session": f"C{int(time.time())}"}
     checklist_pending[u_id] = CLOSING_ITEMS.copy()
+    
+    # Создаем клавиатуру с кнопками-задачами
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    for i in checklist_pending[u_id]: kb.insert(i)
-    await message.answer("Пункты закрытия:", reply_markup=kb.add("⬅ Назад"))
+    for i in checklist_pending[u_id]:
+        kb.insert(i)
+    kb.add("⬅ Назад")
+    
+    await message.answer("Отмечайте выполненные пункты закрытия (они будут исчезать):", reply_markup=kb)
 
 @dp.message_handler(lambda m: user_states.get(m.from_user.id, {}).get("state") == "cls")
 async def closing_step(message: types.Message):
     u_id = message.from_user.id
-    if message.text not in checklist_pending.get(u_id, []): return
-    asyncio.create_task(send_to_sheet({"sheet": "Чеклист", "user": message.from_user.full_name, "session_id": user_states[u_id]["session"], "task": message.text, "val": "✅"}))
-    checklist_pending[u_id].remove(message.text)
+    task = message.text
+    
+    # Если нажали "Назад", выходим из режима чеклиста
+    if task == "⬅ Назад":
+        user_states.pop(u_id, None)
+        checklist_pending.pop(u_id, None)
+        await message.answer("Главное меню:", reply_markup=get_main_kb())
+        return
+
+    # Проверяем, есть ли такой пункт в оставшихся задачах
+    if u_id not in checklist_pending or task not in checklist_pending[u_id]:
+        return # Игнорируем нажатия на кнопки, которых уже нет в списке
+
+    # Отправляем в Google Таблицу
+    payload = {
+        "sheet": "Чеклист", 
+        "user": message.from_user.full_name, 
+        "session_id": user_states[u_id]["session"], 
+        "task": task, 
+        "val": "✅"
+    }
+    asyncio.create_task(send_to_sheet(payload))
+
+    # Удаляем выполненный пункт из списка
+    checklist_pending[u_id].remove(task)
+
+    # Если еще остались пункты
     if checklist_pending[u_id]:
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        for i in checklist_pending[u_id]: kb.insert(i)
-        await message.answer("Ок. Дальше:", reply_markup=kb.add("⬅ Назад"))
+        for i in checklist_pending[u_id]:
+            kb.insert(i)
+        kb.add("⬅ Назад")
+        await message.answer(f"Принято: {task}. Что еще сделано?", reply_markup=kb)
     else:
-        user_states.pop(u_id); await message.answer("🎉 Смена закрыта!", reply_markup=get_main_kb())
+        # Если все пункты выполнены
+        user_states.pop(u_id, None)
+        checklist_pending.pop(u_id, None)
+        await message.answer("🎉 Поздравляю! Все пункты чеклиста выполнены. Смена закрыта!", reply_markup=get_main_kb())
 
 # ================= ЗАПУСК =================
 
