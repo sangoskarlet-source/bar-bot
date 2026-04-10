@@ -258,4 +258,5 @@ async def on_startup(_):
     # Контрольная проверка (можно добавить вызов job_check_reports сюда)
     scheduler.start()
 
-if __
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
